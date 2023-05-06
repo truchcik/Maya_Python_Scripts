@@ -6,6 +6,73 @@
 import pymel.core as pm
 
 
+def get_skin_cluster(node):
+	for history_node in pm.listHistory(node):
+		if isinstance(history_node, pm.nodetypes.SkinCluster):return history_node
+	return 'None'
+
+
+def get_skinFn(clusterName):
+	selList = OpenMaya.MSelectionList()
+	selList.add(clusterName)
+	clusterNode = OpenMaya.MObject()
+	selList.getDependNode(0, clusterNode)
+	skinFn = OpenMayaAnim.MFnSkinCluster(clusterNode)
+	return skinFn
+	
+
+
+def get_weights(skinFn,kompresuj = False):
+	# get the MPlug for the weightList and weights attributes
+	wlPlug = skinFn.findPlug('weightList')
+	wPlug = skinFn.findPlug('weights')
+	wlAttr = wlPlug.attribute()
+	wAttr = wPlug.attribute()
+	wInfIds = OpenMaya.MIntArray()	
+	# get the MDagPath for all influence
+	infDags = OpenMaya.MDagPathArray()
+	skinFn.influenceObjects(infDags)	
+	# create a dictionary whose key is the MPlug indice id and 
+	# whose value is the influence list id
+	infIds = {}
+	fixIds = {} # z jakiegos powodu do wczytywania potrzebuje odwrotnosci infIds
+	infs = []
+	for x in xrange(infDags.length()):
+		infPath = str(infDags[x].fullPathName())
+		if inf_mode == 'short_names': infPath = infPath.split('|')[-1]
+		infId = int(skinFn.indexForInfluenceObject(infDags[x]))
+		infIds[infId] = x
+		fixIds[x] = infId
+		infs.append(infPath)
+	# the weights are stored in dictionary, the key is the vertId, 
+	# the value is another dictionary whose key is the influence id and 
+	# value is the weight for that influence
+	weights = {}
+	for vId in xrange(wlPlug.numElements()):
+		vWeights = {}
+		# tell the weights attribute which vertex id it represents
+		wPlug.selectAncestorLogicalIndex(vId, wlAttr)		
+		# get the indice of all non-zero weights for this vert
+		wPlug.getExistingArrayAttributeIndices(wInfIds)	
+		# create a copy of the current wPlug
+		infPlug = OpenMaya.MPlug(wPlug)
+		for infId in wInfIds:
+			# tell the infPlug it represents the current influence id
+			infPlug.selectAncestorLogicalIndex(infId, wAttr)			
+			# add this influence and its weight to this verts weights
+			try:
+				if kompresuj: vWeights[infIds[infId]] = round(infPlug.asDouble(),5)
+				else: vWeights[infIds[infId]] = infPlug.asDouble()
+				
+			except KeyError:
+				# assumes a removed influence
+				pass
+		weights[vId] = vWeights
+	return weights, infs, infIds, fixIds
+
+
+
+
 def set_weights(clusterName, infs, weights, no_skin):
 	
 	def zero_weights(clusterName, infs):
