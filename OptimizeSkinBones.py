@@ -1,9 +1,13 @@
 #OptimizeBones
-#for selected mesh:
-#Removes all deformers except 'main_skeleton' list from skinning  
-#Moves removed bone's skin weights to their parents/grandparents from 'main_skeleton' list
+#Removes all deformers except in main_skeleton from skinning  for selected mesh
+#G:\nauka\Scripts_Python\Scripts_Python_Maya\PyMel\SKIN\OptimizeBones.py
 
+import maya.OpenMaya as OpenMaya
+import maya.OpenMayaAnim as OpenMayaAnim
+import maya.cmds as cmds
+import maya.mel as mel
 import pymel.core as pm
+
 
 
 def get_skin_cluster(node):
@@ -69,10 +73,8 @@ def get_weights(skinFn,kompresuj = False):
 				pass
 		weights[vId] = vWeights
 	return weights, infs, infIds, fixIds
-
-
-
-
+	
+	
 def set_weights(clusterName, infs, weights, no_skin):
 	
 	def zero_weights(clusterName, infs):
@@ -105,20 +107,29 @@ def get_hierarchy(mainBone):
 	def hierarchyTree(mainBone, allChildren):
 		children = pm.listRelatives(mainBone, c=True)
 		children = [ str(x.name() ) for x in children if str(x.name()) not in main_skeleton]
-		children = [x for x in children if x in weight_data['infs']] #zbieram tylko te dzieci które są w wagach
 		if children:
 				for c in children: allChildren.append(c)
 				for child in children:hierarchyTree(child, allChildren)   
 	
 	allChildren = []
 	hierarchyTree(str(mainBone), allChildren)
+	
+	allChildren = [x for x in allChildren if x in weight_data['infs']] #zbieram tylko te dzieci które są w wagach
 	return allChildren	
 
 
+#weights	{vert index:{influence id : weight}, vert index 2 {}, ...}
+#infs		tablica kosci
+#infIds     dict mapuje id istniejącego deformera mesha w id deformera z binda {index w meshu(str) : index w meshu podczas binda (int), ...}
+#weights	dict [vert index(int) : {deformer index(int) : weight(float), ...}
 
+sciezka1 = 		r'G:\nauka\Scripts_Python\Scripts_Python_Maya\PyMel\_FAST_SKIN_WRK\data'
+inf_mode = 		'short_names'	#Zapisuje deformery tylko jako nazwy np 'Hips'.'long_names' jako hierarchie np 'Skeleton|Root|Hips'
+kompresuj = 	False			#Pełna precyzja wag. True przycina je do 5 miejsc po przecinku
 main_skeleton  = ['Hips','Spine','Spine1','Spine2','Spine3','Neck','Neck1','Head','LeftShoulder','LeftArm','LeftForeArm','LeftHand','RightShoulder','RightArm','RightForeArm','RightHand','LeftUpLeg','LeftLeg','LeftFoot','LeftToeBase','RightUpLeg','RightLeg','RightFoot','RightToeBase','LeftInHandThumb','LeftHandThumb1','LeftHandThumb2','LeftInHandIndex','LeftHandIndex1','LeftHandIndex2','LeftHandIndex3','LeftInHandMiddle','LeftHandMiddle1','LeftHandMiddle2','LeftHandMiddle3','LeftInHandRing','LeftHandRing1','LeftHandRing2','LeftHandRing3','LeftInHandPinky','LeftHandPinky1','LeftHandPinky2','LeftHandPinky3','RightInHandThumb','RightHandThumb1','RightHandThumb2','RightInHandIndex','RightHandIndex1','RightHandIndex2','RightHandIndex3','RightInHandMiddle','RightHandMiddle1','RightHandMiddle2','RightHandMiddle3','RightInHandRing','RightHandRing1','RightHandRing2','RightHandRing3','RightInHandPinky','RightHandPinky1','RightHandPinky2','RightHandPinky3']
 
 
+sel_child_highlight = pm.selectPref(selectionChildHighlightMode =1, query=True)
 sel = pm.ls(sl=1, type = 'transform')
 obj = sel[0]
 shapeName = str(obj.getShape())
@@ -133,11 +144,17 @@ weight_data = {'weights': weights, 'infs': infs, 'infIds': fixIds}
 name = str(pm.selected()[0].name())
 
 
-for mainBone in main_skeleton:	
+for mainBone in main_skeleton:
+	if mainBone not in weight_data['infs']:
+		print mainBone, 'is missing, skipping this bone'
+		continue
+		
 	mainBoneID = weight_data['infs'].index(mainBone)
 	children = get_hierarchy(mainBone)
+	print mainBone, mainBoneID, children
+	
 	if children != []:
-		print mainBone, mainBoneID
+		#print mainBone, mainBoneID
 		childrenID = [weight_data['infs'].index(c) for c in children]
 		print children, childrenID
 		
@@ -156,10 +173,10 @@ for mainBone in main_skeleton:
 						
 					vtxWeights[mainBoneID]+=vtxWeights[childID]
 					del vtxWeights[childID]
-					#print 'changed ', vtxID, vtxWeights
-									
+					#print 'changed ', vtxID, vtxWeights					
 			weights[vtxID] = vtxWeights
 					
 
 #Load Weights
 set_weights(clusterName, infs, weights, False)
+print 'Done'
