@@ -91,7 +91,7 @@ def makeSkelMesh(bones):
         faceArray = om.MPointArray()
         faceArray.setLength(3)  
         
-        for v in range(len(veritces)/3):
+        for v in range(int(len(veritces)/3)):
             if logme: print ('Triangle{}'.format(v))
             for k in range(3):     
                 faceArray.set(vertices[v*3+k],k)        
@@ -145,6 +145,9 @@ def moveBones2Vertices(bones, oMesh):
     for k, b in enumerate(bones): pm.move(posa[k][0], posa[k][1], posa[k][2], b, absolute=True)
 
 setSelection()
+print ('Hierarchy parent: {}'.format(pm.selected()[0]))
+print ('Source mesh: {}'.format(pm.selected()[-2]))
+print ('Target mesh: {}'.format(pm.selected()[-2]))
 
 action  = 'skelOnly' # if only hierachy is selected, script ends after building mesh
 if len(pm.ls(sl=1))>2:
