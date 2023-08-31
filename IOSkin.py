@@ -12,7 +12,7 @@ import json, sys, time, os.path, string
 
 def check_folder(sciezka):
     if '.' in sciezka.split('\\')[-1]: sciezka = '\\'.join(sciezka.split('\\')[:-1])
-    if not os.path.isdir(sciezka): os.mkdirs(sciezka)
+    if not os.path.isdir(sciezka): os.makedirs(sciezka)
     
 def check_usr():
     import os
