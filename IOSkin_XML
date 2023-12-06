@@ -1,0 +1,91 @@
+#Import or Export skin for selected meshes
+#Traditional approach using XML files
+
+import pymel.core as pm
+import maya.cmds as cmds
+import os, sys
+
+def get_skin_cluster(node):
+    for history_node in pm.listHistory(node):
+        if isinstance(history_node, pm.nodetypes.SkinCluster):return history_node
+    return 'None'
+
+
+def export_skin_2_xml(obj, sciezka):
+    skin_clust = get_skin_cluster(obj)
+    obj_name = obj.name()
+    pm.deformerWeights (obj_name + ".xml", path = sciezka, ex=True, deformer = skin_clust)
+    print('!!! "{}" skin exported !!!'.format(obj_name + ".xml"))
+
+
+def read_xml2(sciezka):
+    if os.path.isfile(sciezka):
+        with open(sciezka, 'r') as f: data = f.read() 
+        f.close()
+        return data
+    else:
+        print ('!!! CAN NOT import skin, "{}" is missing !!!'.format(sciezka.split('/')[-1]))
+        return None
+
+
+def get_deformers_from_xml(data):   
+    deformers = []
+    for line in data.split('\n'):
+        if "weights deformer=" in line:
+            deformers.append(line.split('source="')[-1].split('"')[0])
+    return deformers
+
+
+def get_skin_name_from_xml(data):
+    for line in data.split('\n'):
+        if "weights deformer=" in line:
+            skin_name = line.split('deformer="')[-1].split('" source')[0]
+            return skin_name
+
+
+def import_skin_from_xml(obj, sciezka, other_btype):
+    
+    def replace_bt(obj_name, other_btype):
+        global bodytypes
+        for bt in bodytypes:
+            if bt in obj_name:
+                #print ('obj_name = ', obj_name.replace(bt, other_btype))
+                return obj_name.replace(bt, other_btype)
+        
+    if get_skin_cluster(obj) != 'None':
+        print ('\t***{} already HAS skin. Skipping***'.format(obj))
+        return 'None'
+        
+    obj_shape     = obj.getShape()
+    obj_name      = obj.name()
+    if other_btype != '': obj_name = replace_bt(obj_name, other_btype)
+    xml_data      = read_xml2(sciezka + obj_name + '.xml')
+
+    if xml_data == None: return None
+    deformers     = get_deformers_from_xml(xml_data)
+    skin_name     = get_skin_name_from_xml(xml_data)    
+    deformers.append(obj_shape)
+    
+    pm.select(cl=1)
+    pm.select(deformers)
+    
+    cluster = cmds.skinCluster(name=skin_name, tsb=1)
+    cmds.deformerWeights(obj_name + '.xml' , path = sciezka, deformer=skin_name, im=1)
+    
+    pm.select(obj)
+    print ('\t***Skin for {} imported from {} file***.'.format(obj.name(), obj_name + '.xml'))
+    
+sciezka = 'Z:/p4/WX/wx.assets/characters/_tech/Char_Scripts_Data/XENVS/'
+bodytypes = ['_Maf_', '_Ma_', '_Ms_', '_Mb_', '_Wa_', '_Wo_', '_Mo_', '_Gm_', '_Da_']
+other_btype = ''
+
+m=pm.confirmDialog( title='I/O skin to XML', message='Choose', button=['Import Skin', 'Import Skin from other BType', 'Export Skin', 'CANCEL'],defaultButton='CANCEL')
+if m == 'Import Skin from other BType':
+    other_btype = pm.confirmDialog( title = 'Choose Btype to import skin from', message = 'Choose BType', button = bodytypes +['CANCEL'])
+if m == 'CANCEL': sys.exit
+
+sel = [x for x in pm.selected()]
+
+for obj in sel:
+    if m == 'Export Skin' : export_skin_2_xml(obj, sciezka)
+    elif m in ['Import Skin', 'Import Skin from other BType'] : import_skin_from_xml(obj, sciezka, other_btype)
