@@ -1,173 +1,203 @@
-#Wrap skeleton
-# select bones, source mesh and target mesh 
+# Wrap skeleton
+# Select:
+#   - 1 object: root -> expands hierarchy, builds Skeleton_Mesh only
+#   - 3 objects: root, source mesh, target mesh -> full service (blendShape + wrap + move bones)
+#
 # 1 create mesh fitting bones
 # 2 deforms mesh by delta between two cage meshes
 # 3 fits bones to deformed mesh vtx positions
 
 import maya.cmds as cmds
-import maya.OpenMaya as om
-import maya.api.OpenMaya as api
-import pymel.core as pm
+import maya.OpenMaya as om1
+import maya.api.OpenMaya as om2
+
+# -------------------------
+# Helpers
+# -------------------------
+
+def _is_mesh_transform(x):
+    """Transform with at least one mesh shape child (no ni=True assumptions)."""
+    if not cmds.objExists(x):
+        return False
+    shapes = cmds.listRelatives(x, shapes=True, fullPath=True) or []
+    return any(cmds.nodeType(s) == "mesh" for s in shapes)
 
 
-def setSelection():
-    #Expand seclection to be compatible with rest of the script
-    #a) 1 bone selected: children of bone hierarchy necessary to adjust skeleton
-    #b) 3 objs slelected: does a) and adds delta meshes to end of selection
-    
-    def listHierarchy(obj):
-        #select bone hierarchy except of:
-        #children of '_GRP' objects
-        #bojs with Constraint1 in name
-        def hierarchyTree(parent, lista):
-            if parent[-4:]== '_GRP': return lista
-            pLoc = pm.xform(parent, q=1, ws=1, t=1)
-            children = pm.listRelatives(parent, c=True, type='transform')
-            children = [str(x.name() ) for x in children]
-            
-            if children:
-                for child in children:
-                    #remove unwanted children
-                    if child[-11:] == 'Constraint1': continue
-                    pLoc = pm.xform(child, q=1, ws=1, t=1)
-                    #if cLoc == pLoc:continue                
-                    lista.append(child)
-                    hierarchyTree(child, lista)
-                                                  
-        lista = [str(obj)]
-        hierarchyTree(str(obj), lista)
-        return lista    
-
-    if len(pm.selected()) == 1:
-        print ('1 obj selected. Skeleton only')
-        oObj = pm.selected()[0]
-        pm.select(listHierarchy(oObj))
-    elif len(pm.selected()) ==3:
-        oObj = pm.selected()[0]
-        oSrc = pm.selected()[-2]
-        oTrg = pm.selected()[-1]
-        pm.select(listHierarchy(oObj), oSrc, oTrg)
-        print ('3 objs selected. Full service')
-    else: print('Pleas select pivot, or pivot and  two delta meshes')
+def _get_first_mesh_shape(x):
+    """Return first mesh shape under transform (fullPath)."""
+    shapes = cmds.listRelatives(x, shapes=True, fullPath=True) or []
+    for s in shapes:
+        if cmds.nodeType(s) == "mesh":
+            return s
+    return None
 
 
-def getListPos(lista):
-    #det list of positions of objects in a list
-    locPos = [pm.xform(loc, q=1, ws=1, t=1) for loc in lista]
-    return locPos
-    
+def _list_hierarchy(root):
+    """
+    Return transform hierarchy starting at root.
+    Skips: *_GRP and *Constraint1
+    """
+    root = str(root)
+    out = [root]
 
-def expandListN(lista, n):
-    print ('List len = {}, %= {}'.format(len(lista), len(lista)%n))
-    #print 'Reszta:', len(lista)%n
-    if len(lista)%n != 0:
-        for k in range(n - len(lista)%n):
-            lista.append(lista[k])
-    print ('Expanded list len = {}, %= {}'.format(len(lista), len(lista)%n))
-    print ()
-    return lista
-    
+    def walk(parent):
+        if parent.endswith("_GRP"):
+            return
+        kids = cmds.listRelatives(parent, children=True, type="transform", fullPath=False) or []
+        for k in kids:
+            if k.endswith("Constraint1"):
+                continue
+            out.append(k)
+            walk(k)
 
-def makeSkelMesh(bones):
-    #Create mesh with vertices fitting locations of list of objects    
-    
-    def makeTriMesh(vertices, logme=False):
-        #create mesh from om.MPoint position list 
-        meshFn = om.MFnMesh()    
-        faceArray = om.MPointArray()
-        faceArray.setLength(3)
-        
-        for k in range(len(vertices)-1):
-            if k+2<len(vertices):
-                if logme: print ('Triangle {}, verices {}-{}'.format(k,k,k+2))
-                for n in range(3):
-                    faceArray.set(vertices[n+k],n)
-                    if logme: print ('\tVertex{}:, {}'.format(n+k, [vertices[n+k][x] for x in range(3)]))
-                meshFn.addPolygon(faceArray, True, 0.001)
-        return meshFn
-
-    def makeSplitMesh(veritces, logme=False):
-        meshFn = om.MFnMesh()
-        faceArray = om.MPointArray()
-        faceArray.setLength(3)  
-        
-        for v in range(int(len(veritces)/3)):
-            if logme: print ('Triangle{}'.format(v))
-            for k in range(3):     
-                faceArray.set(vertices[v*3+k],k)        
-                if logme: print ('\tVertex {}, pos {}'.format(v*3+k,[veritces[v*3+k][x] for x in range(3)]))
-            meshFn.addPolygon(faceArray, False)
-        return meshFn  
-    
-    locPos = getListPos(bones)
-    vertices = [om.MPoint(locP[0], locP[1], locP[2]) for locP in locPos]
-    vertices = expandListN(vertices, 3)
-    #meshFn = makeTriMesh(vertices, logme=True)
-    meshFn = makeSplitMesh(vertices, logme=False) #choosen to build uconnected triangles to avoid merge issues
-    meshPm = pm.PyNode(meshFn.fullPathName()).listRelatives(parent = 1)[0]
-    meshPm.rename('Skeleton_Mesh')
-    return meshPm
-  
-    
-def defByDelta(oMesh, oSrc, oTrg):
-    #deforms oMesh by delta between oSrc and oTrg using Wrap deformer
-    
-    def setBlendshape(oSrc, oTrg):
-        pm.select(oTrg)
-        pm.select(oSrc, add=1)
-        skelBlend = pm.blendShape(automatic = 1, n= 'skelBlend', en = 1)    
-        return skelBlend
-    
-    def setWrap(meshPm, oSrc):
-        pm.select(meshPm)
-        pm.select(oSrc, add=1)
-        cmds.CreateWrap()      
-    
-    morph =  setBlendshape(oSrc, oTrg)
-    setWrap(oMesh, oSrc)
-    pm.blendShape( morph, edit=True, w=[(0, 1)])
+    walk(root)
+    return out
 
 
-def moveBones2Vertices(bones, oMesh):
-  
-    def get_positions(obj):
-        #get list of vertices positions
-    	posa = []
-    	mobj = api.MGlobal.getSelectionListByName(obj.name()).getDagPath(0)	#Open Maya mesh handle	
-    	base_node_mfn = api.MFnMesh(mobj) #Open Maya shape handle
-    	base_face_inds = base_node_mfn.getVertices() #[indexy vertexów w trójkątach, indexy vertexow]
-    	positions = base_node_mfn.getPoints()
-    	for i in range(len(positions)):
-    		posa.append([positions[i][0], positions[i][1], positions[i][2]])		
-    	return posa	    
-    
-    posa = get_positions(oMesh)    
-    for k, b in enumerate(bones): pm.move(posa[k][0], posa[k][1], posa[k][2], b, absolute=True)
+def set_selection():
+    """
+    Expands selection  
+    Returns: (bones, src, trg) where src/trg can be None
+    """
+    sel = cmds.ls(selection=True, long=False) or []
 
-setSelection()
-print ('Hierarchy parent: {}'.format(pm.selected()[0]))
-print ('Source mesh: {}'.format(pm.selected()[-2]))
-print ('Target mesh: {}'.format(pm.selected()[-2]))
+    if len(sel) == 1:
+        bones = _list_hierarchy(sel[0])
+        cmds.select(bones, r=True)
+        print("1 obj selected. Skeleton only")
+        return bones, None, None
 
-action  = 'skelOnly' # if only hierachy is selected, script ends after building mesh
-if len(pm.ls(sl=1))>2:
-    oSrc=  pm.ls(sl=1)[-2]
-    oTrg = pm.ls(sl=1)[-1]
+    if len(sel) == 3:
+        root, src, trg = sel[0], sel[-2], sel[-1]
+        bones = _list_hierarchy(root)
+        cmds.select(bones + [src, trg], r=True)
+        print("3 objs selected. Full service")
+        return bones, src, trg
+
+    raise RuntimeError("Please select: (1) root OR (3) root + sourceMesh + targetMesh")
+
+
+# -------------------------
+# Build skeleton mesh (unconnected triangles)
+# -------------------------
+
+def make_skel_mesh(bones, name="Skeleton_Mesh"):
+    """
+    Create a mesh with verts at bone positions.
+    Unconnected triangles to avoid merge issues (same as your original approach).
+    Vertex order: first len(bones) verts correspond to bones.
+    """
+    # Gather world positions
+    loc_pos = [cmds.xform(b, q=True, ws=True, t=True) for b in bones]
+    verts = [om1.MPoint(p[0], p[1], p[2]) for p in loc_pos]
+
+    # Pad to multiple of 3
+    r = len(verts) % 3
+    if r:
+        verts.extend(verts[: (3 - r)])
+
+    mesh_fn = om1.MFnMesh()
+    tri = om1.MPointArray()
+    tri.setLength(3)
+
+    for t in range(len(verts) // 3):
+        i = t * 3
+        tri.set(verts[i], 0)
+        tri.set(verts[i + 1], 1)
+        tri.set(verts[i + 2], 2)
+        mesh_fn.addPolygon(tri, False)
+
+    # mesh_fn.fullPathName() is the shape; parent is transform
+    shape = mesh_fn.fullPathName()
+    parents = cmds.listRelatives(shape, parent=True, fullPath=False) or []
+    if not parents:
+        raise RuntimeError("Failed to find transform for created skeleton mesh.")
+    tr = parents[0]
+
+    if cmds.objExists(name):
+        name = cmds.incrementName(name)
+    tr = cmds.rename(tr, name)
+    return tr
+
+
+# -------------------------
+# Delta deformation setup (blendshape + wrap)
+# -------------------------
+
+def def_by_delta(skel_mesh, src, trg, blend_name="skelBlend"):
+    if not _is_mesh_transform(src):
+        raise RuntimeError("Source mesh must be a mesh transform.")
+    if not _is_mesh_transform(trg):
+        raise RuntimeError("Target mesh must be a mesh transform.")
+
+    # Keep your selection-driven order
+    cmds.select([trg, src], r=True)
+    blend_nodes = cmds.blendShape(automatic=True, name=blend_name, en=True) or []
+    if not blend_nodes:
+        raise RuntimeError("blendShape creation failed.")
+    blend = blend_nodes[0]
+
+    cmds.select([skel_mesh, src], r=True)
+    cmds.CreateWrap()
+
+    # Set first target weight to 1.0 (robust, avoids alias naming)
+    cmds.blendShape(blend, e=True, weight=[(0, 1.0)])
+    return blend
+
+
+# -------------------------
+# Fast vertex read + move bones
+# -------------------------
+
+def _mesh_world_points(mesh_transform):
+    shape = _get_first_mesh_shape(mesh_transform)
+    if not shape:
+        raise RuntimeError(f"Mesh has no shape: {mesh_transform}")
+
+    sel = om2.MSelectionList()
+    sel.add(shape)
+    dag = sel.getDagPath(0)
+    mfn = om2.MFnMesh(dag)
+
+    pts = mfn.getPoints(om2.MSpace.kWorld)
+    return [(p.x, p.y, p.z) for p in pts]
+
+
+def move_bones_to_vertices(bones, skel_mesh):
+    pts = _mesh_world_points(skel_mesh)
+    n = min(len(bones), len(pts))  # padded verts may exceed bones
+
+    for i in range(n):
+        x, y, z = pts[i]
+        cmds.xform(bones[i], ws=True, t=(x, y, z))
+
+
+# -------------------------
+# Run
+# -------------------------
+
+def run():
+    cmds.undoInfo(openChunk=True)
+    cmds.refresh(suspend=True)
     try:
-        if pm.listRelatives(oTrg, children=True)[0].nodeType() == 'mesh':
-            if pm.listRelatives(oSrc, children=True)[0].nodeType() == 'mesh':
-                bones = [x for x in pm.ls(sl=1)[:-2]]
-                action = 'fullService'                
-        else:
-            bones = [x for x in pm.ls(sl=1)]
-            del oSrc
-            del oTrg
-    except: bones = [x for x in pm.ls(sl=1)]
-        
-oMesh = makeSkelMesh(bones) #Make mesh with vtx fitting bones position
+        bones, src, trg = set_selection()
 
-if action == 'fullService':
-    defByDelta(oMesh, oSrc, oTrg)   #Deforms mesh by delta between to cages
-    moveBones2Vertices(bones, oMesh) #Fits skel positions to deformed mesh
-    
-pm.select(bones)
+        print("Hierarchy parent:", bones[0])
+        if src and trg:
+            print("Source mesh:", src)
+            print("Target mesh:", trg)
+
+        skel_mesh = make_skel_mesh(bones)
+
+        if src and trg:
+            def_by_delta(skel_mesh, src, trg)
+            move_bones_to_vertices(bones, skel_mesh)
+
+        cmds.select(bones, r=True)
+
+    finally:
+        cmds.refresh(suspend=False)
+        cmds.undoInfo(closeChunk=True)
+
+
+run()
